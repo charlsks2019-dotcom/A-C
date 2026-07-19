@@ -3,9 +3,10 @@ import Head from "next/head";
 import {
   Home, Target, MessageCircle, User, Plus, Heart, Send, X,
   CheckCircle2, Circle, Flame, Trophy, ChevronRight, Sparkles,
-  Dumbbell, BookOpen, Briefcase, Palette, Image as ImageIcon, Lock, Trash2,
+  Dumbbell, BookOpen, Briefcase, Palette, Image as ImageIcon, Lock, Trash2, Bell, BellOff, Pencil,
 } from "lucide-react";
 import * as db from "../lib/db";
+import { isPushSupported, getPushPermissionState, enablePush, disablePush } from "../lib/push";
 
 const ACCENTS = ["#F4577A", "#35C6B0"];
 const CATEGORIES = [
@@ -43,8 +44,10 @@ export default function Page() {
   const [messages, setMessages] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
+  const [onlineUsers, setOnlineUsers] = useState([]);
   const [tab, setTab] = useState("feed");
   const [showAddGoal, setShowAddGoal] = useState(false);
+  const [editingGoal, setEditingGoal] = useState(null);
   const [showPost, setShowPost] = useState(false);
 
   useEffect(() => {
@@ -71,6 +74,12 @@ export default function Page() {
     const unsub = db.subscribeToAll(() => refetch());
     return unsub;
   }, [unlocked, refetch]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const unsub = db.subscribeToPresence(currentUser, setOnlineUsers);
+    return unsub;
+  }, [currentUser]);
 
   const chooseUser = (name) => {
     setCurrentUser(name);
@@ -121,7 +130,7 @@ export default function Page() {
         <link rel="icon" href="/icon-192.png" />
       </Head>
       <div className="flex flex-col h-full">
-        <TopBar me={me} partner={partner} goals={goals} onSwitch={() => chooseUser(null)} />
+        <TopBar me={me} partner={partner} goals={goals} onlineUsers={onlineUsers} onSwitch={() => chooseUser(null)} />
         <div className="flex-1 overflow-y-auto pb-2">
           {tab === "feed" && (
             <Feed
@@ -133,13 +142,13 @@ export default function Page() {
             />
           )}
           {tab === "goals" && (
-            <Goals goals={goals} users={profiles} onToggle={markGoalDone} onAdd={() => setShowAddGoal(true)} />
+            <Goals goals={goals} users={profiles} currentUser={currentUser} onToggle={markGoalDone} onAdd={() => setShowAddGoal(true)} onEdit={(g) => setEditingGoal(g)} />
           )}
           {tab === "chat" && (
             <Chat messages={messages} users={profiles} currentUser={currentUser}
               onSend={async (text) => { await db.sendMessage(currentUser, text); refetch(); }} />
           )}
-          {tab === "profile" && <Profile users={profiles} goals={goals} posts={posts} currentUser={currentUser} />}
+          {tab === "profile" && <Profile users={profiles} goals={goals} posts={posts} currentUser={currentUser} onlineUsers={onlineUsers} />}
         </div>
         <BottomNav tab={tab} setTab={setTab} accent={me.color} />
       </div>
@@ -150,6 +159,20 @@ export default function Page() {
           onSubmit={async (gVal) => {
             await db.addGoal({ ...gVal, owner_name: currentUser });
             setShowAddGoal(false); refetch();
+          }}
+        />
+      )}
+      {editingGoal && (
+        <EditGoalModal
+          goal={editingGoal}
+          onClose={() => setEditingGoal(null)}
+          onSubmit={async (gVal) => {
+            await db.updateGoal(editingGoal.id, gVal);
+            setEditingGoal(null); refetch();
+          }}
+          onDelete={async () => {
+            await db.deleteGoal(editingGoal.id);
+            setEditingGoal(null); refetch();
           }}
         />
       )}
@@ -269,19 +292,28 @@ function WhoAreYou({ users, onPick }) {
   );
 }
 
-function Avatar({ name, color, size = 32 }) {
+function Avatar({ name, color, size = 32, online }) {
   return (
-    <div style={{ width: size, height: size, borderRadius: "50%", background: `${color}22`, border: `1.5px solid ${color}`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: size * 0.38, color, flexShrink: 0 }} className="font-display">
-      {name.charAt(0).toUpperCase()}
+    <div style={{ position: "relative", flexShrink: 0 }}>
+      <div style={{ width: size, height: size, borderRadius: "50%", background: `${color}22`, border: `1.5px solid ${color}`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: size * 0.38, color }} className="font-display">
+        {name.charAt(0).toUpperCase()}
+      </div>
+      {online !== undefined && (
+        <span style={{
+          position: "absolute", bottom: -1, right: -1, width: size * 0.32, height: size * 0.32, borderRadius: "50%",
+          background: online ? "#35C6B0" : "#4B4E63", border: "2px solid #12131C",
+        }} />
+      )}
     </div>
   );
 }
 
 /* ---------------- Top bar ---------------- */
-function TopBar({ me, partner, goals, onSwitch }) {
+function TopBar({ me, partner, goals, onlineUsers, onSwitch }) {
   const doneToday = goals.filter((g) => g.log.includes(todayKey())).length;
   const total = goals.length;
   const pct = total ? Math.round((doneToday / total) * 100) : 0;
+  const partnerOnline = onlineUsers.includes(partner.name);
   return (
     <div style={{ padding: "16px 18px 12px", borderBottom: "1px solid #1E2030" }}>
       <div className="flex items-center justify-between mb-3">
@@ -289,17 +321,23 @@ function TopBar({ me, partner, goals, onSwitch }) {
           <Sparkles size={16} color="#35C6B0" />
           <span className="font-display" style={{ fontWeight: 700, fontSize: 16 }}>A&C</span>
         </div>
-        <button onClick={onSwitch} className="flex items-center gap-1.5">
-          <Avatar name={me.name} color={me.color} size={26} />
-          <span style={{ fontSize: 12, color: "#8A8DA3" }}>{me.name}</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <span style={{ fontSize: 11, color: partnerOnline ? "#35C6B0" : "#5B5E70", display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ width: 6, height: 6, borderRadius: 99, background: partnerOnline ? "#35C6B0" : "#4B4E63" }} />
+            {partner.name} {partnerOnline ? "online" : "offline"}
+          </span>
+          <button onClick={onSwitch} className="flex items-center gap-1.5">
+            <Avatar name={me.name} color={me.color} size={26} />
+            <span style={{ fontSize: 12, color: "#8A8DA3" }}>{me.name}</span>
+          </button>
+        </div>
       </div>
       <div className="flex items-center gap-2">
         <Avatar name={me.name} color={me.color} size={30} />
         <div className="flex-1 relative" style={{ height: 4, background: "#232535", borderRadius: 99 }}>
           <div style={{ position: "absolute", left: 0, top: 0, height: "100%", borderRadius: 99, width: `${pct}%`, background: "linear-gradient(90deg,#F4577A,#35C6B0)", transition: "width .4s ease" }} />
         </div>
-        <Avatar name={partner.name} color={partner.color} size={30} />
+        <Avatar name={partner.name} color={partner.color} size={30} online={partnerOnline} />
       </div>
       <p className="font-mono" style={{ fontSize: 11, color: "#5B5E70", marginTop: 6, textAlign: "center" }}>{doneToday}/{total || 0} goals checked in today</p>
     </div>
@@ -421,11 +459,22 @@ function PostCard({ post, users, currentUser, onLike, onComment, onDelete }) {
 }
 
 /* ---------------- Goals ---------------- */
-function Goals({ goals, users, onToggle, onAdd }) {
+function Goals({ goals, users, currentUser, onToggle, onAdd, onEdit }) {
   const [filter, setFilter] = useState("all");
   const filtered = filter === "all" ? goals : goals.filter((g) => g.owner_name === filter);
+
+  const myPending = goals.filter((g) => g.owner_name === currentUser && g.cadence === "daily" && !g.log.includes(todayKey()));
+
   return (
     <div className="px-4 pt-4">
+      {myPending.length > 0 && (
+        <div className="flex items-center gap-2.5 mb-4" style={{ background: "#E8B84B14", border: "1px solid #E8B84B44", borderRadius: 14, padding: "12px 14px" }}>
+          <Flame size={18} color="#E8B84B" />
+          <p style={{ fontSize: 12.5, color: "#E8B84B", lineHeight: 1.4 }}>
+            <span style={{ fontWeight: 700 }}>{myPending.length} goal{myPending.length > 1 ? "s" : ""}</span> still waiting on you today — {myPending.map((g) => g.title).join(", ")}
+          </p>
+        </div>
+      )}
       <div className="flex items-center gap-2 mb-4 overflow-x-auto">
         <Chip active={filter === "all"} onClick={() => setFilter("all")} label="All" />
         {users.map((u) => <Chip key={u.name} active={filter === u.name} onClick={() => setFilter(u.name)} label={u.name} color={u.color} />)}
@@ -440,7 +489,10 @@ function Goals({ goals, users, onToggle, onAdd }) {
         </div>
       )}
       <div className="flex flex-col gap-2.5 pb-2">
-        {filtered.map((g) => <GoalRow key={g.id} goal={g} owner={users.find((u) => u.name === g.owner_name)} onToggle={onToggle} />)}
+        {filtered.map((g) => (
+          <GoalRow key={g.id} goal={g} owner={users.find((u) => u.name === g.owner_name)} onToggle={onToggle}
+            onEdit={g.owner_name === currentUser ? () => onEdit(g) : null} />
+        ))}
       </div>
     </div>
   );
@@ -454,7 +506,7 @@ function Chip({ active, onClick, label, color }) {
   );
 }
 
-function GoalRow({ goal, owner, onToggle }) {
+function GoalRow({ goal, owner, onToggle, onEdit }) {
   const cat = catInfo(goal.category);
   const Icon = cat.icon;
   const doneToday = goal.log.includes(todayKey());
@@ -477,6 +529,11 @@ function GoalRow({ goal, owner, onToggle }) {
           <Flame size={13} fill="#E8B84B" />
           <span className="font-mono" style={{ fontSize: 12, fontWeight: 700 }}>{st}</span>
         </div>
+      )}
+      {onEdit && (
+        <button onClick={onEdit} style={{ padding: 4, flexShrink: 0 }}>
+          <Pencil size={15} color="#5B5E70" />
+        </button>
       )}
     </div>
   );
@@ -530,6 +587,59 @@ function AddGoalModal({ onClose, onSubmit }) {
       >
         {busy ? "Adding…" : "Add goal"}
       </button>
+    </Modal>
+  );
+}
+
+function EditGoalModal({ goal, onClose, onSubmit, onDelete }) {
+  const [title, setTitle] = useState(goal.title);
+  const [category, setCategory] = useState(goal.category);
+  const [cadence, setCadence] = useState(goal.cadence);
+  const [busy, setBusy] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  return (
+    <Modal onClose={onClose} title="Edit goal">
+      <label style={{ fontSize: 12, color: "#8A8DA3" }}>Goal</label>
+      <input value={title} onChange={(e) => setTitle(e.target.value)} style={{ ...inputStyle(), margin: "6px 0 16px" }} autoFocus />
+      <label style={{ fontSize: 12, color: "#8A8DA3" }}>Category</label>
+      <div className="flex gap-2 mt-2 mb-4 flex-wrap">
+        {CATEGORIES.map((c) => {
+          const Icon = c.icon; const active = category === c.id;
+          return (
+            <button key={c.id} onClick={() => setCategory(c.id)} className="flex items-center gap-1.5" style={{ padding: "8px 12px", borderRadius: 10, fontSize: 12.5, fontWeight: 600, background: active ? `${c.color}22` : "#1B1D29", border: `1px solid ${active ? c.color : "#2E3145"}`, color: active ? c.color : "#8A8DA3" }}>
+              <Icon size={13} /> {c.label}
+            </button>
+          );
+        })}
+      </div>
+      <label style={{ fontSize: 12, color: "#8A8DA3" }}>Cadence</label>
+      <div className="flex gap-2 mt-2 mb-6">
+        {["daily", "weekly", "monthly"].map((c) => (
+          <button key={c} onClick={() => setCadence(c)} style={{ flex: 1, padding: "9px 0", borderRadius: 10, fontSize: 12.5, fontWeight: 600, textTransform: "capitalize", background: cadence === c ? "#35C6B022" : "#1B1D29", border: `1px solid ${cadence === c ? "#35C6B0" : "#2E3145"}`, color: cadence === c ? "#35C6B0" : "#8A8DA3" }}>{c}</button>
+        ))}
+      </div>
+      <button
+        disabled={!title.trim() || busy}
+        onClick={async () => { setBusy(true); await onSubmit({ title: title.trim(), category, cadence }); setBusy(false); }}
+        style={{ width: "100%", padding: "13px 0", borderRadius: 12, fontWeight: 600, fontSize: 14.5, background: title.trim() ? "linear-gradient(90deg,#F4577A,#35C6B0)" : "#232535", color: title.trim() ? "#12131C" : "#5B5E70", marginBottom: 12 }}
+      >
+        {busy ? "Saving…" : "Save changes"}
+      </button>
+
+      {!confirmingDelete ? (
+        <button onClick={() => setConfirmingDelete(true)} style={{ width: "100%", padding: "10px 0", fontSize: 13, color: "#F4577A", fontWeight: 600 }}>
+          Delete this goal
+        </button>
+      ) : (
+        <div className="flex items-center justify-between" style={{ background: "#F4577A14", border: "1px solid #F4577A44", borderRadius: 10, padding: "10px 12px" }}>
+          <span style={{ fontSize: 12.5, color: "#F4577A" }}>Delete goal & all its history?</span>
+          <div className="flex items-center gap-3">
+            <button onClick={() => setConfirmingDelete(false)} style={{ fontSize: 12.5, color: "#8A8DA3", fontWeight: 600 }}>Cancel</button>
+            <button onClick={onDelete} style={{ fontSize: 12.5, color: "#F4577A", fontWeight: 700 }}>Delete</button>
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }
@@ -641,11 +751,140 @@ function Chat({ messages, users, currentUser, onSend }) {
   );
 }
 
+function NotificationCard({ currentUser }) {
+  const [status, setStatus] = useState("checking"); // checking | unsupported | default | granted | denied
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const supported = await isPushSupported();
+      if (!supported) { setStatus("unsupported"); return; }
+      const perm = await getPushPermissionState();
+      setStatus(perm);
+    })();
+  }, []);
+
+  const turnOn = async () => {
+    setBusy(true);
+    try {
+      const ok = await enablePush(currentUser);
+      setStatus(ok ? "granted" : "denied");
+    } catch (e) {
+      console.error(e);
+    }
+    setBusy(false);
+  };
+
+  const turnOff = async () => {
+    setBusy(true);
+    await disablePush(currentUser);
+    setStatus("default");
+    setBusy(false);
+  };
+
+  if (status === "unsupported") return null;
+
+  const on = status === "granted";
+  return (
+    <div style={{ background: "#1B1D29", border: "1px solid #232535", borderRadius: 16, padding: 16 }}>
+      <div className="flex items-center gap-3">
+        {on ? <Bell size={20} color="#35C6B0" /> : <BellOff size={20} color="#5B5E70" />}
+        <div className="flex-1">
+          <p style={{ fontSize: 14, fontWeight: 600 }}>Notifications</p>
+          <p style={{ fontSize: 11.5, color: "#5B5E70" }}>
+            {status === "denied" ? "Blocked in browser settings" : on ? "You'll get alerts for new posts & messages" : "Off — turn on to get alerts"}
+          </p>
+        </div>
+        {status !== "denied" && (
+          <button
+            disabled={busy}
+            onClick={on ? turnOff : turnOn}
+            style={{
+              padding: "7px 14px", borderRadius: 99, fontSize: 12.5, fontWeight: 600,
+              background: on ? "#232535" : "linear-gradient(90deg,#F4577A,#35C6B0)",
+              color: on ? "#8A8DA3" : "#12131C",
+            }}
+          >
+            {busy ? "…" : on ? "Turn off" : "Turn on"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function last7DayKeys() {
+  const keys = [];
+  const d = new Date();
+  for (let i = 0; i < 7; i++) {
+    keys.push(d.toISOString().slice(0, 10));
+    d.setDate(d.getDate() - 1);
+  }
+  return keys; // most recent first
+}
+
+function WeeklyRecap({ users, goals, posts }) {
+  const week = last7DayKeys();
+  const weekSet = new Set(week);
+
+  const perUser = users.map((u) => {
+    const myGoals = goals.filter((g) => g.owner_name === u.name);
+    const checkins = myGoals.reduce((sum, g) => sum + g.log.filter((d) => weekSet.has(d)).length, 0);
+    const possible = myGoals.filter((g) => g.cadence === "daily").length * 7;
+    const myPosts = posts.filter((p) => p.author_name === u.name && weekSet.has(new Date(p.created_at).toISOString().slice(0, 10)));
+    return { ...u, checkins, possible, postCount: myPosts.length };
+  });
+
+  const bothFullDays = week.filter((day) =>
+    users.every((u) => {
+      const dailyGoals = goals.filter((g) => g.owner_name === u.name && g.cadence === "daily");
+      return dailyGoals.length > 0 && dailyGoals.every((g) => g.log.includes(day));
+    })
+  ).length;
+
+  return (
+    <div style={{ background: "linear-gradient(135deg,#1B1D29,#1B1D29 60%,#20222f)", border: "1px solid #232535", borderRadius: 16, padding: 16 }}>
+      <div className="flex items-center gap-2 mb-4">
+        <Sparkles size={16} color="#E8B84B" />
+        <p className="font-display" style={{ fontWeight: 700, fontSize: 15 }}>This week</p>
+      </div>
+
+      <div className="flex flex-col gap-3 mb-3">
+        {perUser.map((u) => (
+          <div key={u.name} className="flex items-center gap-3">
+            <Avatar name={u.name} color={u.color} size={26} />
+            <div className="flex-1">
+              <div className="flex items-center justify-between mb-1">
+                <span style={{ fontSize: 12.5, fontWeight: 600 }}>{u.name}</span>
+                <span className="font-mono" style={{ fontSize: 11, color: "#8A8DA3" }}>
+                  {u.checkins}/{u.possible || 0} check-ins · {u.postCount} post{u.postCount === 1 ? "" : "s"}
+                </span>
+              </div>
+              <div style={{ height: 5, background: "#232535", borderRadius: 99 }}>
+                <div style={{ height: "100%", borderRadius: 99, width: `${u.possible ? Math.min(100, (u.checkins / u.possible) * 100) : 0}%`, background: u.color }} />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {bothFullDays > 0 && (
+        <p style={{ fontSize: 11.5, color: "#35C6B0", marginTop: 4 }}>
+          🔥 You both completed everything on {bothFullDays} day{bothFullDays > 1 ? "s" : ""} this week
+        </p>
+      )}
+    </div>
+  );
+}
+
 /* ---------------- Profile ---------------- */
-function Profile({ users, goals, posts, currentUser }) {
+function Profile({ users, goals, posts, currentUser, onlineUsers }) {
   return (
     <div className="px-4 pt-4 flex flex-col gap-4">
+      <NotificationCard currentUser={currentUser} />
+      <WeeklyRecap users={users} goals={goals} posts={posts} />
       {users.map((u) => {
+        const online = onlineUsers.includes(u.name);
         const myGoals = goals.filter((g) => g.owner_name === u.name);
         const totalCheckins = myGoals.reduce((sum, g) => sum + g.log.length, 0);
         const bestStreak = myGoals.reduce((max, g) => Math.max(max, streak(g.log)), 0);
@@ -654,10 +893,12 @@ function Profile({ users, goals, posts, currentUser }) {
         return (
           <div key={u.name} style={{ background: "#1B1D29", border: `1px solid ${isMe ? u.color + "55" : "#232535"}`, borderRadius: 16, padding: 16 }}>
             <div className="flex items-center gap-3 mb-4">
-              <Avatar name={u.name} color={u.color} size={42} />
+              <Avatar name={u.name} color={u.color} size={42} online={isMe ? undefined : online} />
               <div>
                 <p className="font-display" style={{ fontWeight: 700, fontSize: 16 }}>{u.name}</p>
-                <p style={{ fontSize: 11.5, color: "#5B5E70" }}>{isMe ? "You" : "Partner"} · {myGoals.length} goals</p>
+                <p style={{ fontSize: 11.5, color: "#5B5E70" }}>
+                  {isMe ? "You" : online ? "Online now" : "Offline"} · {myGoals.length} goals
+                </p>
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2">
