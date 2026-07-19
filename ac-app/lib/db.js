@@ -35,6 +35,16 @@ export async function addGoal({ title, category, cadence, owner_name }) {
   return data[0];
 }
 
+export async function updateGoal(goalId, { title, category, cadence }) {
+  const { error } = await supabase.from("goals").update({ title, category, cadence }).eq("id", goalId);
+  if (error) throw error;
+}
+
+export async function deleteGoal(goalId) {
+  const { error } = await supabase.from("goals").delete().eq("id", goalId);
+  if (error) throw error;
+}
+
 export async function toggleGoalLog(goalId, dateStr, alreadyLogged) {
   if (alreadyLogged) {
     const { error } = await supabase.from("goal_logs").delete().eq("goal_id", goalId).eq("log_date", dateStr);
@@ -107,6 +117,26 @@ export async function getMessages() {
 export async function sendMessage(sender_name, text) {
   const { error } = await supabase.from("messages").insert([{ sender_name, text }]);
   if (error) throw error;
+}
+
+/* ---------- Presence (who's online) ---------- */
+export function subscribeToPresence(userName, onChange) {
+  const channel = supabase.channel("ac-online", {
+    config: { presence: { key: userName } },
+  });
+
+  channel
+    .on("presence", { event: "sync" }, () => {
+      const state = channel.presenceState();
+      onChange(Object.keys(state));
+    })
+    .subscribe(async (status) => {
+      if (status === "SUBSCRIBED") {
+        await channel.track({ online_at: new Date().toISOString() });
+      }
+    });
+
+  return () => supabase.removeChannel(channel);
 }
 
 /* ---------- Realtime subscription ---------- */
