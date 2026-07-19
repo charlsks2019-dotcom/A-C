@@ -3,7 +3,7 @@ import Head from "next/head";
 import {
   Home, Target, MessageCircle, User, Plus, Heart, Send, X,
   CheckCircle2, Circle, Flame, Trophy, ChevronRight, Sparkles,
-  Dumbbell, BookOpen, Briefcase, Palette, Image as ImageIcon, Lock,
+  Dumbbell, BookOpen, Briefcase, Palette, Image as ImageIcon, Lock, Trash2,
 } from "lucide-react";
 import * as db from "../lib/db";
 
@@ -128,6 +128,7 @@ export default function Page() {
               posts={posts} users={profiles} currentUser={currentUser}
               onLike={async (id, liked) => { await db.toggleLike(id, currentUser, liked); refetch(); }}
               onComment={async (id, text) => { await db.addComment(id, currentUser, text); refetch(); }}
+              onDelete={async (id) => { await db.deletePost(id); refetch(); }}
               onOpenPost={() => setShowPost(true)}
             />
           )}
@@ -306,7 +307,7 @@ function TopBar({ me, partner, goals, onSwitch }) {
 }
 
 /* ---------------- Feed ---------------- */
-function Feed({ posts, users, currentUser, onLike, onComment, onOpenPost }) {
+function Feed({ posts, users, currentUser, onLike, onComment, onDelete, onOpenPost }) {
   return (
     <div className="px-4 pt-4 flex flex-col gap-3">
       <button onClick={onOpenPost} className="flex items-center gap-2.5" style={{ background: "#1B1D29", border: "1px dashed #2E3145", borderRadius: 14, padding: "12px 14px" }}>
@@ -324,18 +325,20 @@ function Feed({ posts, users, currentUser, onLike, onComment, onOpenPost }) {
         </div>
       )}
       {posts.map((p) => (
-        <PostCard key={p.id} post={p} users={users} currentUser={currentUser} onLike={onLike} onComment={onComment} />
+        <PostCard key={p.id} post={p} users={users} currentUser={currentUser} onLike={onLike} onComment={onComment} onDelete={onDelete} />
       ))}
     </div>
   );
 }
 
-function PostCard({ post, users, currentUser, onLike, onComment }) {
+function PostCard({ post, users, currentUser, onLike, onComment, onDelete }) {
   const [commentText, setCommentText] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const author = users.find((u) => u.name === post.author_name) || users[0];
   const liked = post.likes.includes(currentUser);
   const cat = post.category ? catInfo(post.category) : null;
   const CatIcon = cat ? cat.icon : null;
+  const isMine = post.author_name === currentUser;
 
   return (
     <div style={{ background: "#1B1D29", border: "1px solid #232535", borderRadius: 16, padding: 14 }}>
@@ -350,7 +353,22 @@ function PostCard({ post, users, currentUser, onLike, onComment }) {
             <CatIcon size={11} /> {cat.label}
           </span>
         )}
+        {isMine && !confirmingDelete && (
+          <button onClick={() => setConfirmingDelete(true)} style={{ padding: 4 }}>
+            <Trash2 size={15} color="#5B5E70" />
+          </button>
+        )}
       </div>
+
+      {confirmingDelete && (
+        <div className="flex items-center justify-between mb-2.5" style={{ background: "#F4577A14", border: "1px solid #F4577A44", borderRadius: 10, padding: "8px 10px" }}>
+          <span style={{ fontSize: 12, color: "#F4577A" }}>Delete this post?</span>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setConfirmingDelete(false)} style={{ fontSize: 12, color: "#8A8DA3", fontWeight: 600 }}>Cancel</button>
+            <button onClick={() => onDelete(post.id)} style={{ fontSize: 12, color: "#F4577A", fontWeight: 700 }}>Delete</button>
+          </div>
+        </div>
+      )}
 
       {post.type === "checkin" ? (
         <p style={{ fontSize: 14, lineHeight: 1.5 }}>
@@ -686,3 +704,4 @@ function BottomNav({ tab, setTab, accent }) {
     </div>
   );
 }
+
