@@ -208,7 +208,7 @@ function LoadingScreen() {
   return (
     <div className="h-full flex items-center justify-center flex-col gap-3">
       <div className="w-8 h-8 rounded-full border-2 animate-spin" style={{ borderColor: "#35C6B0", borderTopColor: "transparent" }} />
-      <p style={{ color: "#8A8DA3", fontSize: 13 }}>Loading A&C…</p>
+      <p style={{ color: "#8A8DA3", fontSize: 13 }}>Loading A&Câ€¦</p>
     </div>
   );
 }
@@ -230,7 +230,7 @@ function PasscodeGate({ correct, onUnlock }) {
         onKeyDown={(e) => e.key === "Enter" && submit()}
         style={inputStyle()} className="mb-3" autoFocus
       />
-      {error && <p style={{ color: "#F4577A", fontSize: 12, marginBottom: 12 }}>That's not it — try again.</p>}
+      {error && <p style={{ color: "#F4577A", fontSize: 12, marginBottom: 12 }}>That's not it â€” try again.</p>}
       <button onClick={submit} style={{ background: "linear-gradient(90deg,#F4577A,#35C6B0)", color: "#12131C", fontWeight: 600, fontSize: 15, borderRadius: 14, padding: "13px 0" }}>
         Unlock
       </button>
@@ -268,7 +268,7 @@ function Onboarding({ onSubmit }) {
           color: !nameA.trim() || !nameB.trim() ? "#5B5E70" : "#12131C", fontWeight: 600, fontSize: 15, borderRadius: 14, padding: "14px 0",
         }}
       >
-        {busy ? "Creating…" : "Create our space"}
+        {busy ? "Creatingâ€¦" : "Create our space"}
       </button>
     </div>
   );
@@ -352,12 +352,12 @@ function Feed({ posts, users, currentUser, onLike, onComment, onDelete, onOpenPo
         <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#232535", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <Plus size={15} color="#8A8DA3" />
         </div>
-        <span style={{ fontSize: 13.5, color: "#8A8DA3" }}>Share an update…</span>
+        <span style={{ fontSize: 13.5, color: "#8A8DA3" }}>Share an updateâ€¦</span>
       </button>
 
       {posts.length === 0 && (
         <div className="px-2 pt-10 text-center">
-          <div style={{ fontSize: 40 }}>🛤️</div>
+          <div style={{ fontSize: 40 }}>ðŸ›¤ï¸</div>
           <p className="font-display" style={{ fontWeight: 600, fontSize: 16, marginTop: 12 }}>No trail yet</p>
           <p style={{ color: "#8A8DA3", fontSize: 13, marginTop: 4 }}>Check in on a goal, or share your first update.</p>
         </div>
@@ -448,7 +448,7 @@ function PostCard({ post, users, currentUser, onLike, onComment, onDelete }) {
         <input
           value={commentText} onChange={(e) => setCommentText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && commentText.trim()) { onComment(post.id, commentText); setCommentText(""); } }}
-          placeholder="Add a comment…" style={{ flex: 1, background: "transparent", fontSize: 13, color: "#EDEEF4", outline: "none" }}
+          placeholder="Add a commentâ€¦" style={{ flex: 1, background: "transparent", fontSize: 13, color: "#EDEEF4", outline: "none" }}
         />
         <button onClick={() => { if (commentText.trim()) { onComment(post.id, commentText); setCommentText(""); } }}>
           <Send size={15} color="#5B5E70" />
@@ -471,7 +471,7 @@ function Goals({ goals, users, currentUser, onToggle, onAdd, onEdit }) {
         <div className="flex items-center gap-2.5 mb-4" style={{ background: "#E8B84B14", border: "1px solid #E8B84B44", borderRadius: 14, padding: "12px 14px" }}>
           <Flame size={18} color="#E8B84B" />
           <p style={{ fontSize: 12.5, color: "#E8B84B", lineHeight: 1.4 }}>
-            <span style={{ fontWeight: 700 }}>{myPending.length} goal{myPending.length > 1 ? "s" : ""}</span> still waiting on you today — {myPending.map((g) => g.title).join(", ")}
+            <span style={{ fontWeight: 700 }}>{myPending.length} goal{myPending.length > 1 ? "s" : ""}</span> still waiting on you today â€” {myPending.map((g) => g.title).join(", ")}
           </p>
         </div>
       )}
@@ -490,7 +490,8 @@ function Goals({ goals, users, currentUser, onToggle, onAdd, onEdit }) {
       )}
       <div className="flex flex-col gap-2.5 pb-2">
         {filtered.map((g) => (
-          <GoalRow key={g.id} goal={g} owner={users.find((u) => u.name === g.owner_name)} onToggle={onToggle}
+          <GoalRow key={g.id} goal={g} owner={users.find((u) => u.name === g.owner_name)}
+            onToggle={g.owner_name === currentUser ? onToggle : null}
             onEdit={g.owner_name === currentUser ? () => onEdit(g) : null} />
         ))}
       </div>
@@ -511,17 +512,25 @@ function GoalRow({ goal, owner, onToggle, onEdit }) {
   const Icon = cat.icon;
   const doneToday = goal.log.includes(todayKey());
   const st = streak(goal.log);
+  const isMine = !!onToggle;
   return (
-    <div style={{ background: "#1B1D29", border: "1px solid #232535", borderRadius: 14, padding: 13, display: "flex", alignItems: "center", gap: 12 }}>
-      <button onClick={() => onToggle(goal)}>
-        {doneToday ? <CheckCircle2 size={24} color="#35C6B0" /> : <Circle size={24} color="#3A3D52" />}
+    <div style={{ background: "#1B1D29", border: "1px solid #232535", borderRadius: 14, padding: 13, display: "flex", alignItems: "center", gap: 12, opacity: isMine ? 1 : 0.85 }}>
+      <button onClick={() => isMine && onToggle(goal)} disabled={!isMine} style={{ cursor: isMine ? "pointer" : "default" }}>
+        {doneToday ? (
+          <CheckCircle2 size={24} color="#35C6B0" />
+        ) : isMine ? (
+          <Circle size={24} color="#3A3D52" />
+        ) : (
+          <Circle size={24} color="#262838" strokeDasharray="3 3" />
+        )}
       </button>
       <div className="flex-1 min-w-0">
         <p style={{ fontSize: 14, fontWeight: 600, textDecoration: doneToday ? "line-through" : "none", color: doneToday ? "#6C6F82" : "#EDEEF4" }}>{goal.title}</p>
         <div className="flex items-center gap-2 mt-1">
           <span className="flex items-center gap-1" style={{ color: cat.color, fontSize: 11 }}><Icon size={11} /> {cat.label}</span>
-          <span style={{ color: "#5B5E70", fontSize: 11 }}>· {goal.cadence}</span>
-          {owner && <span style={{ color: owner.color, fontSize: 11 }}>· {owner.name}</span>}
+          <span style={{ color: "#5B5E70", fontSize: 11 }}>Â· {goal.cadence}</span>
+          {owner && <span style={{ color: owner.color, fontSize: 11 }}>Â· {owner.name}</span>}
+          {!isMine && !doneToday && <span style={{ color: "#5B5E70", fontSize: 11, fontStyle: "italic" }}>Â· waiting on them</span>}
         </div>
       </div>
       {st > 0 && (
@@ -585,7 +594,7 @@ function AddGoalModal({ onClose, onSubmit }) {
         onClick={async () => { setBusy(true); await onSubmit({ title: title.trim(), category, cadence }); setBusy(false); }}
         style={{ width: "100%", padding: "13px 0", borderRadius: 12, fontWeight: 600, fontSize: 14.5, background: title.trim() ? "linear-gradient(90deg,#F4577A,#35C6B0)" : "#232535", color: title.trim() ? "#12131C" : "#5B5E70" }}
       >
-        {busy ? "Adding…" : "Add goal"}
+        {busy ? "Addingâ€¦" : "Add goal"}
       </button>
     </Modal>
   );
@@ -624,7 +633,7 @@ function EditGoalModal({ goal, onClose, onSubmit, onDelete }) {
         onClick={async () => { setBusy(true); await onSubmit({ title: title.trim(), category, cadence }); setBusy(false); }}
         style={{ width: "100%", padding: "13px 0", borderRadius: 12, fontWeight: 600, fontSize: 14.5, background: title.trim() ? "linear-gradient(90deg,#F4577A,#35C6B0)" : "#232535", color: title.trim() ? "#12131C" : "#5B5E70", marginBottom: 12 }}
       >
-        {busy ? "Saving…" : "Save changes"}
+        {busy ? "Savingâ€¦" : "Save changes"}
       </button>
 
       {!confirmingDelete ? (
@@ -677,7 +686,7 @@ function NewPostModal({ goals, onClose, onSubmit }) {
 
   return (
     <Modal onClose={onClose} title="Share an update">
-      <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="What's on your mind? A win, a setback, a thought…" rows={4} autoFocus style={{ ...inputStyle(), resize: "none", marginBottom: 12 }} />
+      <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="What's on your mind? A win, a setback, a thoughtâ€¦" rows={4} autoFocus style={{ ...inputStyle(), resize: "none", marginBottom: 12 }} />
 
       {preview ? (
         <div className="relative mb-4">
@@ -714,7 +723,7 @@ function NewPostModal({ goals, onClose, onSubmit }) {
         onClick={submit}
         style={{ width: "100%", padding: "13px 0", borderRadius: 12, fontWeight: 600, fontSize: 14.5, background: (text.trim() || file) ? "linear-gradient(90deg,#F4577A,#35C6B0)" : "#232535", color: (text.trim() || file) ? "#12131C" : "#5B5E70" }}
       >
-        {busy ? "Posting…" : "Post"}
+        {busy ? "Postingâ€¦" : "Post"}
       </button>
     </Modal>
   );
@@ -728,7 +737,7 @@ function Chat({ messages, users, currentUser, onSend }) {
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto px-4 pt-4 flex flex-col gap-2">
-        {messages.length === 0 && <p style={{ color: "#5B5E70", fontSize: 13, textAlign: "center", marginTop: 40 }}>Say hi 👋</p>}
+        {messages.length === 0 && <p style={{ color: "#5B5E70", fontSize: 13, textAlign: "center", marginTop: 40 }}>Say hi ðŸ‘‹</p>}
         {messages.map((m) => {
           const mine = m.sender_name === currentUser;
           return (
@@ -742,7 +751,7 @@ function Chat({ messages, users, currentUser, onSend }) {
         <div ref={endRef} />
       </div>
       <div className="flex items-center gap-2 p-3" style={{ borderTop: "1px solid #1E2030" }}>
-        <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && text.trim()) { onSend(text); setText(""); } }} placeholder="Message…" style={{ flex: 1, background: "#1B1D29", border: "1px solid #2E3145", borderRadius: 99, padding: "10px 16px", fontSize: 14, color: "#EDEEF4", outline: "none" }} />
+        <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && text.trim()) { onSend(text); setText(""); } }} placeholder="Messageâ€¦" style={{ flex: 1, background: "#1B1D29", border: "1px solid #2E3145", borderRadius: 99, padding: "10px 16px", fontSize: 14, color: "#EDEEF4", outline: "none" }} />
         <button onClick={() => { if (text.trim()) { onSend(text); setText(""); } }} style={{ background: "#35C6B0", borderRadius: "50%", width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <Send size={16} color="#12131C" />
         </button>
@@ -792,7 +801,7 @@ function NotificationCard({ currentUser }) {
         <div className="flex-1">
           <p style={{ fontSize: 14, fontWeight: 600 }}>Notifications</p>
           <p style={{ fontSize: 11.5, color: "#5B5E70" }}>
-            {status === "denied" ? "Blocked in browser settings" : on ? "You'll get alerts for new posts & messages" : "Off — turn on to get alerts"}
+            {status === "denied" ? "Blocked in browser settings" : on ? "You'll get alerts for new posts & messages" : "Off â€” turn on to get alerts"}
           </p>
         </div>
         {status !== "denied" && (
@@ -805,7 +814,7 @@ function NotificationCard({ currentUser }) {
               color: on ? "#8A8DA3" : "#12131C",
             }}
           >
-            {busy ? "…" : on ? "Turn off" : "Turn on"}
+            {busy ? "â€¦" : on ? "Turn off" : "Turn on"}
           </button>
         )}
       </div>
@@ -857,7 +866,7 @@ function WeeklyRecap({ users, goals, posts }) {
               <div className="flex items-center justify-between mb-1">
                 <span style={{ fontSize: 12.5, fontWeight: 600 }}>{u.name}</span>
                 <span className="font-mono" style={{ fontSize: 11, color: "#8A8DA3" }}>
-                  {u.checkins}/{u.possible || 0} check-ins · {u.postCount} post{u.postCount === 1 ? "" : "s"}
+                  {u.checkins}/{u.possible || 0} check-ins Â· {u.postCount} post{u.postCount === 1 ? "" : "s"}
                 </span>
               </div>
               <div style={{ height: 5, background: "#232535", borderRadius: 99 }}>
@@ -870,7 +879,7 @@ function WeeklyRecap({ users, goals, posts }) {
 
       {bothFullDays > 0 && (
         <p style={{ fontSize: 11.5, color: "#35C6B0", marginTop: 4 }}>
-          🔥 You both completed everything on {bothFullDays} day{bothFullDays > 1 ? "s" : ""} this week
+          ðŸ”¥ You both completed everything on {bothFullDays} day{bothFullDays > 1 ? "s" : ""} this week
         </p>
       )}
     </div>
@@ -897,7 +906,7 @@ function Profile({ users, goals, posts, currentUser, onlineUsers }) {
               <div>
                 <p className="font-display" style={{ fontWeight: 700, fontSize: 16 }}>{u.name}</p>
                 <p style={{ fontSize: 11.5, color: "#5B5E70" }}>
-                  {isMe ? "You" : online ? "Online now" : "Offline"} · {myGoals.length} goals
+                  {isMe ? "You" : online ? "Online now" : "Offline"} Â· {myGoals.length} goals
                 </p>
               </div>
             </div>
@@ -945,4 +954,3 @@ function BottomNav({ tab, setTab, accent }) {
     </div>
   );
 }
-
