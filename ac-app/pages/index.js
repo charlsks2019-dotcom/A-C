@@ -17,6 +17,76 @@ const CATEGORIES = [
 ];
 const catInfo = (id) => CATEGORIES.find((c) => c.id === id) || CATEGORIES[0];
 const todayKey = () => new Date().toISOString().slice(0, 10);
+
+function startOfWeek(d = new Date()) {
+  const date = new Date(d);
+  const day = date.getDay(); // 0=Sun
+  const diff = day === 0 ? -6 : 1 - day; // Monday as start
+  date.setDate(date.getDate() + diff);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+function isInCurrentWeek(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  const start = startOfWeek();
+  const end = new Date(start); end.setDate(start.getDate() + 6);
+  return d >= start && d <= end;
+}
+function isInCurrentMonth(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+}
+function periodLabel(period) {
+  const now = new Date();
+  if (period === "day") return now.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  if (period === "week") {
+    const start = startOfWeek();
+    const end = new Date(start); end.setDate(start.getDate() + 6);
+    return `Week of ${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  }
+  return now.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+function isDoneForPeriod(goal, period) {
+  if (period === "day") return goal.log.includes(todayKey());
+  if (period === "week") return goal.log.some(isInCurrentWeek);
+  return goal.log.some(isInCurrentMonth);
+}
+
+function yesterdayKey() {
+  const d = new Date(); d.setDate(d.getDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+function inRange(dateStr, start, end) {
+  const d = new Date(dateStr + "T00:00:00");
+  return d >= start && d <= end;
+}
+function lastWeekInfo() {
+  const thisStart = startOfWeek();
+  const start = new Date(thisStart); start.setDate(thisStart.getDate() - 7);
+  const end = new Date(thisStart); end.setDate(thisStart.getDate() - 1);
+  return { key: start.toISOString().slice(0, 10), start, end };
+}
+function lastMonthInfo() {
+  const now = new Date();
+  const firstOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = new Date(firstOfThisMonth); end.setDate(0);
+  const start = new Date(end.getFullYear(), end.getMonth(), 1);
+  const key = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}`;
+  return { key, start, end };
+}
+function recapPeriodLabel(period, periodKey) {
+  if (period === "day") {
+    return new Date(periodKey + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  }
+  if (period === "week") {
+    const start = new Date(periodKey + "T00:00:00");
+    const end = new Date(start); end.setDate(start.getDate() + 6);
+    return `Week of ${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  }
+  const [y, m] = periodKey.split("-");
+  return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
 function timeAgo(ts) {
   const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
   if (s < 60) return "now";
@@ -46,7 +116,7 @@ export default function Page() {
   const [currentUser, setCurrentUser] = useState(null);
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [tab, setTab] = useState("feed");
-  const [showAddGoal, setShowAddGoal] = useState(false);
+  const [showAddGoal, setShowAddGoal] = useState(null); // null | 'daily' | 'weekly' | 'monthly'
   const [editingGoal, setEditingGoal] = useState(null);
   const [showPost, setShowPost] = useState(false);
 
@@ -81,6 +151,43 @@ export default function Page() {
     return unsub;
   }, [currentUser]);
 
+  const recapsCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!loaded || !profiles || recapsCheckedRef.current) return;
+    recapsCheckedRef.current = true;
+    (async () => {
+      const yKey = yesterdayKey();
+      const week = lastWeekInfo();
+      const month = lastMonthInfo();
+
+      for (const u of profiles) {
+        const dayGoals = goals.filter((g) => g.owner_name === u.name && g.cadence === "daily");
+        if (dayGoals.length > 0 && !posts.some((p) => p.author_name === u.name && p.recap_period === "day" && p.recap_period_key === yKey)) {
+          await db.createRecapIfMissing({
+            author_name: u.name, recap_period: "day", recap_period_key: yKey,
+            recap_items: dayGoals.map((g) => ({ title: g.title, category: g.category, done: g.log.includes(yKey) })),
+          });
+        }
+
+        const weekGoals = goals.filter((g) => g.owner_name === u.name && g.cadence === "weekly");
+        if (weekGoals.length > 0 && !posts.some((p) => p.author_name === u.name && p.recap_period === "week" && p.recap_period_key === week.key)) {
+          await db.createRecapIfMissing({
+            author_name: u.name, recap_period: "week", recap_period_key: week.key,
+            recap_items: weekGoals.map((g) => ({ title: g.title, category: g.category, done: g.log.some((d) => inRange(d, week.start, week.end)) })),
+          });
+        }
+
+        const monthGoals = goals.filter((g) => g.owner_name === u.name && g.cadence === "monthly");
+        if (monthGoals.length > 0 && !posts.some((p) => p.author_name === u.name && p.recap_period === "month" && p.recap_period_key === month.key)) {
+          await db.createRecapIfMissing({
+            author_name: u.name, recap_period: "month", recap_period_key: month.key,
+            recap_items: monthGoals.map((g) => ({ title: g.title, category: g.category, done: g.log.some((d) => inRange(d, month.start, month.end)) })),
+          });
+        }
+      }
+    })();
+  }, [loaded, profiles, goals, posts]);
+
   const chooseUser = (name) => {
     setCurrentUser(name);
     if (name) localStorage.setItem("ac-current-user", name);
@@ -107,12 +214,6 @@ export default function Page() {
     const key = todayKey();
     const already = goal.log.includes(key);
     await db.toggleGoalLog(goal.id, key, already);
-    if (!already) {
-      await db.addPost({
-        author_name: currentUser, type: "checkin",
-        goal_id: goal.id, goal_title: goal.title, category: goal.category, text: "",
-      });
-    }
     refetch();
   };
 
@@ -134,7 +235,7 @@ export default function Page() {
         <div className="flex-1 overflow-y-auto pb-2">
           {tab === "feed" && (
             <Feed
-              posts={posts} users={profiles} currentUser={currentUser}
+              posts={posts} goals={goals} users={profiles} currentUser={currentUser}
               onLike={async (id, liked) => { await db.toggleLike(id, currentUser, liked); refetch(); }}
               onComment={async (id, text) => { await db.addComment(id, currentUser, text); refetch(); }}
               onDelete={async (id) => { await db.deletePost(id); refetch(); }}
@@ -142,7 +243,7 @@ export default function Page() {
             />
           )}
           {tab === "goals" && (
-            <Goals goals={goals} users={profiles} currentUser={currentUser} onToggle={markGoalDone} onAdd={() => setShowAddGoal(true)} onEdit={(g) => setEditingGoal(g)} />
+            <Goals goals={goals} users={profiles} currentUser={currentUser} onToggle={markGoalDone} onAdd={(cadence) => setShowAddGoal(cadence)} onEdit={(g) => setEditingGoal(g)} />
           )}
           {tab === "chat" && (
             <Chat messages={messages} users={profiles} currentUser={currentUser}
@@ -155,10 +256,11 @@ export default function Page() {
 
       {showAddGoal && (
         <AddGoalModal
-          onClose={() => setShowAddGoal(false)}
+          presetCadence={showAddGoal}
+          onClose={() => setShowAddGoal(null)}
           onSubmit={async (gVal) => {
             await db.addGoal({ ...gVal, owner_name: currentUser });
-            setShowAddGoal(false); refetch();
+            setShowAddGoal(null); refetch();
           }}
         />
       )}
@@ -208,7 +310,7 @@ function LoadingScreen() {
   return (
     <div className="h-full flex items-center justify-center flex-col gap-3">
       <div className="w-8 h-8 rounded-full border-2 animate-spin" style={{ borderColor: "#35C6B0", borderTopColor: "transparent" }} />
-      <p style={{ color: "#8A8DA3", fontSize: 13 }}>Loading A&Câ€¦</p>
+      <p style={{ color: "#8A8DA3", fontSize: 13 }}>Loading A&C…</p>
     </div>
   );
 }
@@ -230,7 +332,7 @@ function PasscodeGate({ correct, onUnlock }) {
         onKeyDown={(e) => e.key === "Enter" && submit()}
         style={inputStyle()} className="mb-3" autoFocus
       />
-      {error && <p style={{ color: "#F4577A", fontSize: 12, marginBottom: 12 }}>That's not it â€” try again.</p>}
+      {error && <p style={{ color: "#F4577A", fontSize: 12, marginBottom: 12 }}>That's not it — try again.</p>}
       <button onClick={submit} style={{ background: "linear-gradient(90deg,#F4577A,#35C6B0)", color: "#12131C", fontWeight: 600, fontSize: 15, borderRadius: 14, padding: "13px 0" }}>
         Unlock
       </button>
@@ -268,7 +370,7 @@ function Onboarding({ onSubmit }) {
           color: !nameA.trim() || !nameB.trim() ? "#5B5E70" : "#12131C", fontWeight: 600, fontSize: 15, borderRadius: 14, padding: "14px 0",
         }}
       >
-        {busy ? "Creatingâ€¦" : "Create our space"}
+        {busy ? "Creating…" : "Create our space"}
       </button>
     </div>
   );
@@ -345,21 +447,23 @@ function TopBar({ me, partner, goals, onlineUsers, onSwitch }) {
 }
 
 /* ---------------- Feed ---------------- */
-function Feed({ posts, users, currentUser, onLike, onComment, onDelete, onOpenPost }) {
+function Feed({ posts, goals, users, currentUser, onLike, onComment, onDelete, onOpenPost }) {
   return (
     <div className="px-4 pt-4 flex flex-col gap-3">
       <button onClick={onOpenPost} className="flex items-center gap-2.5" style={{ background: "#1B1D29", border: "1px dashed #2E3145", borderRadius: 14, padding: "12px 14px" }}>
         <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#232535", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <Plus size={15} color="#8A8DA3" />
         </div>
-        <span style={{ fontSize: 13.5, color: "#8A8DA3" }}>Share an updateâ€¦</span>
+        <span style={{ fontSize: 13.5, color: "#8A8DA3" }}>Share an update…</span>
       </button>
 
       {posts.length === 0 && (
         <div className="px-2 pt-10 text-center">
-          <div style={{ fontSize: 40 }}>ðŸ›¤ï¸</div>
+          <div style={{ fontSize: 40 }}>🛤️</div>
           <p className="font-display" style={{ fontWeight: 600, fontSize: 16, marginTop: 12 }}>No trail yet</p>
-          <p style={{ color: "#8A8DA3", fontSize: 13, marginTop: 4 }}>Check in on a goal, or share your first update.</p>
+          <p style={{ color: "#8A8DA3", fontSize: 13, marginTop: 4 }}>
+            Day/week/month recaps post automatically once each period ends — or share an update now.
+          </p>
         </div>
       )}
       {posts.map((p) => (
@@ -383,8 +487,15 @@ function PostCard({ post, users, currentUser, onLike, onComment, onDelete }) {
       <div className="flex items-center gap-2 mb-2.5">
         <Avatar name={author.name} color={author.color} size={30} />
         <div className="flex-1">
-          <p style={{ fontSize: 13.5, fontWeight: 600 }}>{author.name}</p>
-          <p style={{ fontSize: 11, color: "#5B5E70" }}>{timeAgo(post.created_at)}</p>
+          <p style={{ fontSize: 13.5, fontWeight: 600 }}>
+            {author.name}
+            {post.type === "recap" && (
+              <span style={{ color: "#8A8DA3", fontWeight: 500 }}> · {post.recap_period} recap</span>
+            )}
+          </p>
+          <p style={{ fontSize: 11, color: "#5B5E70" }}>
+            {post.type === "recap" ? recapPeriodLabel(post.recap_period, post.recap_period_key) : timeAgo(post.created_at)}
+          </p>
         </div>
         {cat && (
           <span className="flex items-center gap-1" style={{ background: `${cat.color}1A`, color: cat.color, borderRadius: 99, padding: "3px 9px", fontSize: 11, fontWeight: 600 }}>
@@ -408,7 +519,23 @@ function PostCard({ post, users, currentUser, onLike, onComment, onDelete }) {
         </div>
       )}
 
-      {post.type === "checkin" ? (
+      {post.type === "recap" ? (
+        <div className="flex flex-col gap-1.5">
+          <p className="font-mono" style={{ fontSize: 11.5, color: "#8A8DA3", marginBottom: 2 }}>
+            {post.recap_items.filter((i) => i.done).length}/{post.recap_items.length} done
+          </p>
+          {post.recap_items.map((item, i) => {
+            const c = catInfo(item.category);
+            return (
+              <div key={i} className="flex items-center gap-2">
+                {item.done ? <CheckCircle2 size={15} color="#35C6B0" /> : <Circle size={15} color="#3A3D52" />}
+                <span style={{ fontSize: 13.5, color: item.done ? "#6C6F82" : "#EDEEF4", textDecoration: item.done ? "line-through" : "none" }}>{item.title}</span>
+                <span style={{ color: c.color, fontSize: 10.5 }}>· {c.label}</span>
+              </div>
+            );
+          })}
+        </div>
+      ) : post.type === "checkin" ? (
         <p style={{ fontSize: 14, lineHeight: 1.5 }}>
           <span style={{ color: author.color, fontWeight: 600 }}>{author.name}</span> checked in on{" "}
           <span style={{ fontWeight: 600 }}>"{post.goal_title}"</span>{" "}
@@ -448,7 +575,7 @@ function PostCard({ post, users, currentUser, onLike, onComment, onDelete }) {
         <input
           value={commentText} onChange={(e) => setCommentText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && commentText.trim()) { onComment(post.id, commentText); setCommentText(""); } }}
-          placeholder="Add a commentâ€¦" style={{ flex: 1, background: "transparent", fontSize: 13, color: "#EDEEF4", outline: "none" }}
+          placeholder="Add a comment…" style={{ flex: 1, background: "transparent", fontSize: 13, color: "#EDEEF4", outline: "none" }}
         />
         <button onClick={() => { if (commentText.trim()) { onComment(post.id, commentText); setCommentText(""); } }}>
           <Send size={15} color="#5B5E70" />
@@ -459,9 +586,12 @@ function PostCard({ post, users, currentUser, onLike, onComment, onDelete }) {
 }
 
 /* ---------------- Goals ---------------- */
+const PERIOD_CADENCE = { day: "daily", week: "weekly", month: "monthly" };
+const PERIOD_LABELS = { day: "Day", week: "Week", month: "Month" };
+
 function Goals({ goals, users, currentUser, onToggle, onAdd, onEdit }) {
   const [filter, setFilter] = useState("all");
-  const filtered = filter === "all" ? goals : goals.filter((g) => g.owner_name === filter);
+  const visibleUsers = filter === "all" ? users : users.filter((u) => u.name === filter);
 
   const myPending = goals.filter((g) => g.owner_name === currentUser && g.cadence === "daily" && !g.log.includes(todayKey()));
 
@@ -471,30 +601,100 @@ function Goals({ goals, users, currentUser, onToggle, onAdd, onEdit }) {
         <div className="flex items-center gap-2.5 mb-4" style={{ background: "#E8B84B14", border: "1px solid #E8B84B44", borderRadius: 14, padding: "12px 14px" }}>
           <Flame size={18} color="#E8B84B" />
           <p style={{ fontSize: 12.5, color: "#E8B84B", lineHeight: 1.4 }}>
-            <span style={{ fontWeight: 700 }}>{myPending.length} goal{myPending.length > 1 ? "s" : ""}</span> still waiting on you today â€” {myPending.map((g) => g.title).join(", ")}
+            <span style={{ fontWeight: 700 }}>{myPending.length} goal{myPending.length > 1 ? "s" : ""}</span> still waiting on you today — {myPending.map((g) => g.title).join(", ")}
           </p>
         </div>
       )}
       <div className="flex items-center gap-2 mb-4 overflow-x-auto">
         <Chip active={filter === "all"} onClick={() => setFilter("all")} label="All" />
         {users.map((u) => <Chip key={u.name} active={filter === u.name} onClick={() => setFilter(u.name)} label={u.name} color={u.color} />)}
-        <button onClick={onAdd} className="ml-auto flex items-center gap-1" style={{ background: "#232535", borderRadius: 99, padding: "7px 12px" }}>
-          <Plus size={14} /> <span style={{ fontSize: 12.5, fontWeight: 600 }}>New</span>
-        </button>
       </div>
-      {filtered.length === 0 && (
-        <div className="text-center pt-12">
-          <Target size={30} style={{ color: "#2E3145", margin: "0 auto" }} />
-          <p style={{ color: "#5B5E70", fontSize: 13, marginTop: 8 }}>No goals here yet.</p>
-        </div>
-      )}
-      <div className="flex flex-col gap-2.5 pb-2">
-        {filtered.map((g) => (
-          <GoalRow key={g.id} goal={g} owner={users.find((u) => u.name === g.owner_name)}
-            onToggle={g.owner_name === currentUser ? onToggle : null}
-            onEdit={g.owner_name === currentUser ? () => onEdit(g) : null} />
+
+      <div className="flex flex-col gap-3 pb-2">
+        {["day", "week", "month"].map((period) => (
+          <div key={period} className="flex flex-col gap-3">
+            {visibleUsers.map((u) => (
+              <PeriodGoalCard
+                key={period + u.name}
+                period={period}
+                owner={u}
+                isMine={u.name === currentUser}
+                goals={goals.filter((g) => g.owner_name === u.name && g.cadence === PERIOD_CADENCE[period])}
+                onToggle={onToggle}
+                onEdit={onEdit}
+                onAdd={() => onAdd(PERIOD_CADENCE[period])}
+              />
+            ))}
+          </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function PeriodGoalCard({ period, owner, isMine, goals, onToggle, onEdit, onAdd }) {
+  const doneCount = goals.filter((g) => isDoneForPeriod(g, period)).length;
+  return (
+    <div style={{ background: "#1B1D29", border: `1px solid ${isMine ? owner.color + "33" : "#232535"}`, borderRadius: 16, padding: 14 }}>
+      <div className="flex items-center justify-between mb-2.5">
+        <div className="flex items-center gap-2">
+          <Avatar name={owner.name} color={owner.color} size={22} />
+          <span style={{ fontSize: 13.5, fontWeight: 700 }} className="font-display">{PERIOD_LABELS[period]}</span>
+          <span style={{ fontSize: 11, color: "#5B5E70" }}>{owner.name}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {goals.length > 0 && <span className="font-mono" style={{ fontSize: 11, color: "#8A8DA3" }}>{doneCount}/{goals.length}</span>}
+          {isMine && (
+            <button onClick={onAdd} style={{ background: "#232535", borderRadius: 99, padding: "4px 9px", display: "flex", alignItems: "center", gap: 3 }}>
+              <Plus size={12} color="#8A8DA3" /><span style={{ fontSize: 11, color: "#8A8DA3", fontWeight: 600 }}>Add</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {goals.length === 0 ? (
+        <p style={{ fontSize: 12.5, color: "#5B5E70", fontStyle: "italic" }}>
+          {isMine ? `No ${period} goals yet — tap Add to create one.` : "No goals set for this period."}
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {goals.map((g) => (
+            <CompactGoalRow key={g.id} goal={g} period={period}
+              onToggle={isMine ? () => onToggle(g) : null}
+              onEdit={isMine ? () => onEdit(g) : null} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CompactGoalRow({ goal, period, onToggle, onEdit }) {
+  const cat = catInfo(goal.category);
+  const Icon = cat.icon;
+  const done = isDoneForPeriod(goal, period);
+  const isMine = !!onToggle;
+  const st = period === "day" ? streak(goal.log) : 0;
+  return (
+    <div className="flex items-center gap-2.5">
+      <button onClick={() => isMine && onToggle()} disabled={!isMine}>
+        {done ? <CheckCircle2 size={20} color="#35C6B0" /> : <Circle size={20} color={isMine ? "#3A3D52" : "#262838"} strokeDasharray={isMine ? undefined : "3 3"} />}
+      </button>
+      <div className="flex-1 min-w-0">
+        <p style={{ fontSize: 13.5, fontWeight: 500, textDecoration: done ? "line-through" : "none", color: done ? "#6C6F82" : "#EDEEF4" }}>{goal.title}</p>
+        <span className="flex items-center gap-1" style={{ color: cat.color, fontSize: 10.5 }}><Icon size={10} /> {cat.label}</span>
+      </div>
+      {st > 0 && (
+        <div className="flex items-center gap-0.5" style={{ color: "#E8B84B" }}>
+          <Flame size={11} fill="#E8B84B" />
+          <span className="font-mono" style={{ fontSize: 11, fontWeight: 700 }}>{st}</span>
+        </div>
+      )}
+      {onEdit && (
+        <button onClick={onEdit} style={{ padding: 3, flexShrink: 0 }}>
+          <Pencil size={13} color="#5B5E70" />
+        </button>
+      )}
     </div>
   );
 }
@@ -504,47 +704,6 @@ function Chip({ active, onClick, label, color }) {
     <button onClick={onClick} style={{ flexShrink: 0, fontSize: 12.5, fontWeight: 600, padding: "7px 13px", borderRadius: 99, background: active ? (color ? `${color}22` : "#EDEEF4") : "#1B1D29", color: active ? (color || "#12131C") : "#8A8DA3", border: active && color ? `1px solid ${color}` : "1px solid transparent" }}>
       {label}
     </button>
-  );
-}
-
-function GoalRow({ goal, owner, onToggle, onEdit }) {
-  const cat = catInfo(goal.category);
-  const Icon = cat.icon;
-  const doneToday = goal.log.includes(todayKey());
-  const st = streak(goal.log);
-  const isMine = !!onToggle;
-  return (
-    <div style={{ background: "#1B1D29", border: "1px solid #232535", borderRadius: 14, padding: 13, display: "flex", alignItems: "center", gap: 12, opacity: isMine ? 1 : 0.85 }}>
-      <button onClick={() => isMine && onToggle(goal)} disabled={!isMine} style={{ cursor: isMine ? "pointer" : "default" }}>
-        {doneToday ? (
-          <CheckCircle2 size={24} color="#35C6B0" />
-        ) : isMine ? (
-          <Circle size={24} color="#3A3D52" />
-        ) : (
-          <Circle size={24} color="#262838" strokeDasharray="3 3" />
-        )}
-      </button>
-      <div className="flex-1 min-w-0">
-        <p style={{ fontSize: 14, fontWeight: 600, textDecoration: doneToday ? "line-through" : "none", color: doneToday ? "#6C6F82" : "#EDEEF4" }}>{goal.title}</p>
-        <div className="flex items-center gap-2 mt-1">
-          <span className="flex items-center gap-1" style={{ color: cat.color, fontSize: 11 }}><Icon size={11} /> {cat.label}</span>
-          <span style={{ color: "#5B5E70", fontSize: 11 }}>Â· {goal.cadence}</span>
-          {owner && <span style={{ color: owner.color, fontSize: 11 }}>Â· {owner.name}</span>}
-          {!isMine && !doneToday && <span style={{ color: "#5B5E70", fontSize: 11, fontStyle: "italic" }}>Â· waiting on them</span>}
-        </div>
-      </div>
-      {st > 0 && (
-        <div className="flex items-center gap-1" style={{ color: "#E8B84B" }}>
-          <Flame size={13} fill="#E8B84B" />
-          <span className="font-mono" style={{ fontSize: 12, fontWeight: 700 }}>{st}</span>
-        </div>
-      )}
-      {onEdit && (
-        <button onClick={onEdit} style={{ padding: 4, flexShrink: 0 }}>
-          <Pencil size={15} color="#5B5E70" />
-        </button>
-      )}
-    </div>
   );
 }
 
@@ -563,13 +722,13 @@ function Modal({ onClose, title, children }) {
   );
 }
 
-function AddGoalModal({ onClose, onSubmit }) {
+function AddGoalModal({ onClose, onSubmit, presetCadence }) {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("fitness");
-  const [cadence, setCadence] = useState("daily");
+  const [cadence, setCadence] = useState(presetCadence || "daily");
   const [busy, setBusy] = useState(false);
   return (
-    <Modal onClose={onClose} title="New goal">
+    <Modal onClose={onClose} title={presetCadence ? `New ${presetCadence} goal` : "New goal"}>
       <label style={{ fontSize: 12, color: "#8A8DA3" }}>Goal</label>
       <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Run 3x this week" style={{ ...inputStyle(), margin: "6px 0 16px" }} autoFocus />
       <label style={{ fontSize: 12, color: "#8A8DA3" }}>Category</label>
@@ -583,18 +742,22 @@ function AddGoalModal({ onClose, onSubmit }) {
           );
         })}
       </div>
-      <label style={{ fontSize: 12, color: "#8A8DA3" }}>Cadence</label>
-      <div className="flex gap-2 mt-2 mb-6">
-        {["daily", "weekly", "monthly"].map((c) => (
-          <button key={c} onClick={() => setCadence(c)} style={{ flex: 1, padding: "9px 0", borderRadius: 10, fontSize: 12.5, fontWeight: 600, textTransform: "capitalize", background: cadence === c ? "#35C6B022" : "#1B1D29", border: `1px solid ${cadence === c ? "#35C6B0" : "#2E3145"}`, color: cadence === c ? "#35C6B0" : "#8A8DA3" }}>{c}</button>
-        ))}
-      </div>
+      {!presetCadence && (
+        <>
+          <label style={{ fontSize: 12, color: "#8A8DA3" }}>Cadence</label>
+          <div className="flex gap-2 mt-2 mb-6">
+            {["daily", "weekly", "monthly"].map((c) => (
+              <button key={c} onClick={() => setCadence(c)} style={{ flex: 1, padding: "9px 0", borderRadius: 10, fontSize: 12.5, fontWeight: 600, textTransform: "capitalize", background: cadence === c ? "#35C6B022" : "#1B1D29", border: `1px solid ${cadence === c ? "#35C6B0" : "#2E3145"}`, color: cadence === c ? "#35C6B0" : "#8A8DA3" }}>{c}</button>
+            ))}
+          </div>
+        </>
+      )}
       <button
         disabled={!title.trim() || busy}
         onClick={async () => { setBusy(true); await onSubmit({ title: title.trim(), category, cadence }); setBusy(false); }}
         style={{ width: "100%", padding: "13px 0", borderRadius: 12, fontWeight: 600, fontSize: 14.5, background: title.trim() ? "linear-gradient(90deg,#F4577A,#35C6B0)" : "#232535", color: title.trim() ? "#12131C" : "#5B5E70" }}
       >
-        {busy ? "Addingâ€¦" : "Add goal"}
+        {busy ? "Adding…" : "Add goal"}
       </button>
     </Modal>
   );
@@ -633,7 +796,7 @@ function EditGoalModal({ goal, onClose, onSubmit, onDelete }) {
         onClick={async () => { setBusy(true); await onSubmit({ title: title.trim(), category, cadence }); setBusy(false); }}
         style={{ width: "100%", padding: "13px 0", borderRadius: 12, fontWeight: 600, fontSize: 14.5, background: title.trim() ? "linear-gradient(90deg,#F4577A,#35C6B0)" : "#232535", color: title.trim() ? "#12131C" : "#5B5E70", marginBottom: 12 }}
       >
-        {busy ? "Savingâ€¦" : "Save changes"}
+        {busy ? "Saving…" : "Save changes"}
       </button>
 
       {!confirmingDelete ? (
@@ -686,7 +849,7 @@ function NewPostModal({ goals, onClose, onSubmit }) {
 
   return (
     <Modal onClose={onClose} title="Share an update">
-      <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="What's on your mind? A win, a setback, a thoughtâ€¦" rows={4} autoFocus style={{ ...inputStyle(), resize: "none", marginBottom: 12 }} />
+      <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="What's on your mind? A win, a setback, a thought…" rows={4} autoFocus style={{ ...inputStyle(), resize: "none", marginBottom: 12 }} />
 
       {preview ? (
         <div className="relative mb-4">
@@ -723,7 +886,7 @@ function NewPostModal({ goals, onClose, onSubmit }) {
         onClick={submit}
         style={{ width: "100%", padding: "13px 0", borderRadius: 12, fontWeight: 600, fontSize: 14.5, background: (text.trim() || file) ? "linear-gradient(90deg,#F4577A,#35C6B0)" : "#232535", color: (text.trim() || file) ? "#12131C" : "#5B5E70" }}
       >
-        {busy ? "Postingâ€¦" : "Post"}
+        {busy ? "Posting…" : "Post"}
       </button>
     </Modal>
   );
@@ -737,7 +900,7 @@ function Chat({ messages, users, currentUser, onSend }) {
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto px-4 pt-4 flex flex-col gap-2">
-        {messages.length === 0 && <p style={{ color: "#5B5E70", fontSize: 13, textAlign: "center", marginTop: 40 }}>Say hi ðŸ‘‹</p>}
+        {messages.length === 0 && <p style={{ color: "#5B5E70", fontSize: 13, textAlign: "center", marginTop: 40 }}>Say hi 👋</p>}
         {messages.map((m) => {
           const mine = m.sender_name === currentUser;
           return (
@@ -751,7 +914,7 @@ function Chat({ messages, users, currentUser, onSend }) {
         <div ref={endRef} />
       </div>
       <div className="flex items-center gap-2 p-3" style={{ borderTop: "1px solid #1E2030" }}>
-        <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && text.trim()) { onSend(text); setText(""); } }} placeholder="Messageâ€¦" style={{ flex: 1, background: "#1B1D29", border: "1px solid #2E3145", borderRadius: 99, padding: "10px 16px", fontSize: 14, color: "#EDEEF4", outline: "none" }} />
+        <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && text.trim()) { onSend(text); setText(""); } }} placeholder="Message…" style={{ flex: 1, background: "#1B1D29", border: "1px solid #2E3145", borderRadius: 99, padding: "10px 16px", fontSize: 14, color: "#EDEEF4", outline: "none" }} />
         <button onClick={() => { if (text.trim()) { onSend(text); setText(""); } }} style={{ background: "#35C6B0", borderRadius: "50%", width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <Send size={16} color="#12131C" />
         </button>
@@ -801,7 +964,7 @@ function NotificationCard({ currentUser }) {
         <div className="flex-1">
           <p style={{ fontSize: 14, fontWeight: 600 }}>Notifications</p>
           <p style={{ fontSize: 11.5, color: "#5B5E70" }}>
-            {status === "denied" ? "Blocked in browser settings" : on ? "You'll get alerts for new posts & messages" : "Off â€” turn on to get alerts"}
+            {status === "denied" ? "Blocked in browser settings" : on ? "You'll get alerts for new posts & messages" : "Off — turn on to get alerts"}
           </p>
         </div>
         {status !== "denied" && (
@@ -814,7 +977,7 @@ function NotificationCard({ currentUser }) {
               color: on ? "#8A8DA3" : "#12131C",
             }}
           >
-            {busy ? "â€¦" : on ? "Turn off" : "Turn on"}
+            {busy ? "…" : on ? "Turn off" : "Turn on"}
           </button>
         )}
       </div>
@@ -866,7 +1029,7 @@ function WeeklyRecap({ users, goals, posts }) {
               <div className="flex items-center justify-between mb-1">
                 <span style={{ fontSize: 12.5, fontWeight: 600 }}>{u.name}</span>
                 <span className="font-mono" style={{ fontSize: 11, color: "#8A8DA3" }}>
-                  {u.checkins}/{u.possible || 0} check-ins Â· {u.postCount} post{u.postCount === 1 ? "" : "s"}
+                  {u.checkins}/{u.possible || 0} check-ins · {u.postCount} post{u.postCount === 1 ? "" : "s"}
                 </span>
               </div>
               <div style={{ height: 5, background: "#232535", borderRadius: 99 }}>
@@ -879,7 +1042,7 @@ function WeeklyRecap({ users, goals, posts }) {
 
       {bothFullDays > 0 && (
         <p style={{ fontSize: 11.5, color: "#35C6B0", marginTop: 4 }}>
-          ðŸ”¥ You both completed everything on {bothFullDays} day{bothFullDays > 1 ? "s" : ""} this week
+          🔥 You both completed everything on {bothFullDays} day{bothFullDays > 1 ? "s" : ""} this week
         </p>
       )}
     </div>
@@ -906,7 +1069,7 @@ function Profile({ users, goals, posts, currentUser, onlineUsers }) {
               <div>
                 <p className="font-display" style={{ fontWeight: 700, fontSize: 16 }}>{u.name}</p>
                 <p style={{ fontSize: 11.5, color: "#5B5E70" }}>
-                  {isMe ? "You" : online ? "Online now" : "Offline"} Â· {myGoals.length} goals
+                  {isMe ? "You" : online ? "Online now" : "Offline"} · {myGoals.length} goals
                 </p>
               </div>
             </div>
