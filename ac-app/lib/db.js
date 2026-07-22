@@ -76,6 +76,14 @@ export async function addPost(post) {
   return data[0];
 }
 
+export async function createRecapIfMissing({ author_name, recap_period, recap_period_key, recap_items }) {
+  // Fails silently on conflict (recap already exists for this person+period) â€” that's expected, not an error
+  const { error } = await supabase
+    .from("posts")
+    .insert([{ author_name, type: "recap", recap_period, recap_period_key, recap_items }]);
+  if (error && error.code !== "23505") throw error; // 23505 = unique_violation, safe to ignore
+}
+
 export async function deletePost(postId) {
   // comments and likes cascade-delete automatically via the schema's foreign keys
   const { error } = await supabase.from("posts").delete().eq("id", postId);
@@ -152,4 +160,3 @@ export function subscribeToAll(onChange) {
     .subscribe();
   return () => supabase.removeChannel(channel);
 }
-
